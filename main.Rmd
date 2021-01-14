@@ -1,0 +1,677 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls())
+library(tictoc)
+library(tokenizers)
+library(keras)
+library(dplyr)
+library(tm)
+library(purrr)
+library(caTools)
+library(tensorflow)
+library(stringi)
+df <- read.csv(file = 'train.csv', stringsAsFactors = FALSE)
+df_test <- read.csv(file='test.csv', stringsAsFactors = FALSE)
+
+```
+
+
+```{r}
+df[3,]
+df$sentiment = df$sentiment - 1
+
+```
+
+Here we see the distribution of the number of words for each tweet
+```{r}
+df$tweet %>% 
+  strsplit(" ") %>% 
+  sapply(length) %>% 
+  summary()
+```
+
+```{r}
+#testingexample <- 'Hello #r @u $ $$stew...pid wh%y can_u u**vgv ^vgv https://cran.r-project.org/'
+#testing <- (tokenize_tweets(testingexample,lowercase = TRUE,strip_punct = FALSE,strip_url = TRUE))
+#print(tokenize_tweets(toString(unlist(testing)),strip_punct=TRUE))
+#print(testing)
+
+
+tokenizing <- function(x){
+  if (length(x) == 1){
+    return (as.list(x))}
+  else{
+    testing <- (tokenize_tweets(x,lowercase = TRUE,strip_punct = FALSE,strip_url = TRUE))
+    testing <- tokenize_tweets(toString(unlist(testing)),strip_punct=TRUE)
+    # testing <- tokenize_word_stems(x,strip_punct=FALSE)
+  return(testing)}
+}
+
+#print(class(tokenizing(df$tweet[185])))
+#print(class(df$tweet))
+```
+
+Splitting dataset into training and testing
+```{r}
+#df$tokentweet <- (tokenize_tweets(df$tweet,lowercase=TRUE,strip_url=TRUE))
+# df$tokentweet <- lapply(df$tweet,tokenizing)
+#print(class(df$tweet[1]))
+
+arraytweet=c()
+for (i in c(1:length(df$sentiment))){
+  tokentweet <- tokenizing(df$tweet[i])
+  arraytweet <- append(arraytweet,c(toString(unlist(tokentweet))))}
+df$arraytweet <- arraytweet
+
+print(df$arraytweet[2])
+```
+
+```{r}
+num_words <- 10000
+max_length <- 60
+
+# Define text_vector layer
+text_vectorization <- layer_text_vectorization(max_tokens = num_words, output_sequence_length = max_length)
+
+# Define index to word dictionary
+text_vectorization %>% 
+  adapt(unlist(df$arraytweet))
+```
+
+```{r}
+# We can now see the vocabulary is in our text vectorization layer.
+# get_vocabulary(text_vectorization)
+```
+
+
+```{r}
+# We can see how the text vectorization layer transform its inputs
+tt <- text_vectorization(matrix(df$arraytweet[3]))
+ttt <- layer_embedding(tt,input_dim = num_words+1, output_dim = 128)
+tttt <- layer_global_average_pooling_1d(ttt)
+print(dim(tttt))
+```
+
+```{r}
+num_words
+```
+
+# Model 1 - val_loss: 0.3065 - val_accuracy: 0.8833 - test: 88.5%
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words + 1, output_dim = 128) %>%
+  #bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_global_average_pooling_1d() %>%
+  layer_dense(units = 64, activation = "tanh") %>%
+  # layer_dense(units = 32, activation = "relu") %>%
+  layer_dropout(0.8) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+# Model 2 -> damn bad, slow n useless
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 128) %>%
+  #bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_lstm(units=256,return_sequences = TRUE,activation = 'relu')%>%
+  layer_dropout(rate=0.2)%>%
+  layer_lstm(units=256,activation = 'relu')%>%
+  layer_dropout(rate=0.2)%>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_dropout(0.2) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+
+# Model 3 -> another slow n useless 
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 128) %>%
+  layer_simple_rnn(units=128,activation = 'relu') %>%
+  layer_dense(units = 512, activation = "relu") %>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 4 -> saved to submission 4 - val_loss: 0.3189 - val_accuracy: 0.8769 - test:87.15%
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 128) %>%
+  bidirectional(layer_lstm(units = 128, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_dropout(0.2) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 5 -> (val_loss: 0.3222 - val_accuracy: 0.8787 - test: 86.17778%)
+```{r}
+print("model 5")
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 128) %>%
+  bidirectional(layer_lstm(units = 128, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 6 -> (val_loss: 0.3247 - val_accuracy: 0.8796 - test: 87.08%)
+```{r}
+print('model 6')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 7 ->(val_loss: 0.3129 - val_accuracy: 0.8838 - test: 86.15%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 8 -> (val_loss: 0.3600 - val_accuracy: 0.8758 - test: 87.84)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.8) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.8) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 9 - (val_loss: 0.3004 - val_accuracy: 0.8858 - test: 87.86%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 10 -> (val_loss: 0.3127 - val_accuracy: 0.8876 - test: 87.6%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.5,return_sequence=TRUE)) %>%
+  time_distributed(layer_dense(units=64,activation='relu')) %>%
+  layer_flatten() %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+# Model 11 -> (val_loss: 0.3025 - val_accuracy: 0.8827 - test:88.8%)
+# Model 12 -> same as M11 but using rmsprop as optimizer (- val_loss: 0.3036 - val_accuracy: 0.8827 - test:89.31%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words + 1, output_dim = 64) %>%
+  #bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_global_average_pooling_1d() %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  # layer_dense(units = 32, activation = "relu") %>%
+  layer_dropout(0.4) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 13 -> (val_loss: 0.3109 - val_accuracy: 0.8844 - test: 86.84%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_gru(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 14 compare to m10 for dropout rate
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2,return_sequence=TRUE)) %>%
+  time_distributed(layer_dense(units=64,activation='relu')) %>%
+  layer_flatten() %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+# Model 15 -> extra dense from m13(val_loss: 0.3117 - val_accuracy: 0.8840 - test: 87.5%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+
+# Model 16 -> m9 + regularizer (val_loss: 0.6178 - val_accuracy: 0.8273 - test: 81.95%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2,bias_regularizer = regularizer_l1(0.01), recurrent_regularizer = regularizer_l1(0.01), kernel_regularizer = regularizer_l1(0.01))) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+
+
+# Model 17 -> m16 reduce regu (val_loss: 0.4243 - val_accuracy: 0.8776 - test:86.911%)
+```{r}
+print('m17')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2,bias_regularizer = regularizer_l1(0.001), recurrent_regularizer = regularizer_l1(0.001), kernel_regularizer = regularizer_l1(0.001))) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 18 -> m17 reduce regu (val_loss: 0.3828 - val_accuracy: 0.8816 - test: 87.08%)
+```{r}
+print('m18')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2,bias_regularizer = regularizer_l1(0.0001), recurrent_regularizer = regularizer_l1(0.0001), kernel_regularizer = regularizer_l1(0.0001))) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+# Model 19 -> reduce regu (extra) (val_loss: 0.4755 - val_accuracy: 0.8727 - test:86.08%)
+```{r}
+print('m19')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2,bias_regularizer = regularizer_l1_l2(0.0001), recurrent_regularizer = regularizer_l1_l2(0.0001), kernel_regularizer = regularizer_l1_l2(0.0001))) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+# Model 20 - compare to m15 more dense -> val_loss: 0.3239 - val_accuracy: 0.8773 - test 86.51%
+```{r}
+print('m20') 
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+# Model 21 - compare to m9 cnn lstm (val_loss: 0.3187 - val_accuracy: 0.8804 - test:87.711)
+```{r}
+print('m21')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_conv_1d(filters = 32,kernel_size = 3,padding = 'same',activation = 'relu')%>%
+  layer_max_pooling_1d(pool_size = 2)%>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+
+# Model 22 -> m21 remove last dense (val_loss: 0.2971 - val_accuracy: 0.8871 - test:86.822%)
+```{r}
+print('m22')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_conv_1d(filters = 32,kernel_size = 3,padding = 'same',activation = 'relu')%>%
+  layer_max_pooling_1d(pool_size = 2)%>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  #layer_dense(units = 64, activation = "relu") %>%
+  #layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+
+# Model 23 -> m21 change pooling (val_loss: 0.3041 - val_accuracy: 0.8849 - test:87.42%)
+```{r}
+print('m23')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_conv_1d(filters = 32,kernel_size = 3,padding = 'same',activation = 'relu')%>%
+  layer_average_pooling_1d(pool_size = 2)%>%
+  #layer_max_pooling_1d(pool_size = 2)%>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+# Model 24 -> m21 remove bidirectional (val_loss: 0.3417 - val_accuracy: 0.8707 - test: 86.86%)
+```{r}
+print('m24')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_conv_1d(filters = 32,kernel_size = 3,padding = 'same',activation = 'relu')%>%
+  layer_max_pooling_1d(pool_size = 2)%>%
+  layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+```
+
+# Model 25 -> (val_loss: 0.3087 - val_accuracy: 0.8840 - test:88.13333%)
+
+```{r}
+print('m25')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_conv_1d(filters = 64,kernel_size = 3,padding = 'same',activation = 'relu',bias_regularizer = regularizer_l1(0.000001), kernel_regularizer = regularizer_l1(0.000001))%>%
+  #layer_average_pooling_1d(pool_size = 2)%>%
+  layer_max_pooling_1d(pool_size = 2)%>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2,bias_regularizer = regularizer_l1(0.000001), recurrent_regularizer = regularizer_l1(0.000001), kernel_regularizer = regularizer_l1(0.000001))) %>%
+  #layer_dense(units = 64, activation = "relu") %>%
+  #layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+# MOdel 26 -> val_loss: 0.3001 - val_accuracy: 0.8858 - test: 87.53333%
+```{r}
+print('m26')
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words+1, output_dim = 64) %>%
+  layer_conv_1d(filters = 64,kernel_size = 3,padding = 'same',activation = 'relu',bias_regularizer = regularizer_l1(0.000001), kernel_regularizer = regularizer_l1(0.000001))%>%
+  #layer_average_pooling_1d(pool_size = 2)%>%
+  layer_max_pooling_1d(pool_size = 2)%>%
+  bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2,bias_regularizer = regularizer_l1(0.000001), recurrent_regularizer = regularizer_l1(0.000001), kernel_regularizer = regularizer_l1(0.000001))) %>%
+  layer_dense(units = 64, activation = "relu",bias_regularizer = regularizer_l1(0.000001), kernel_regularizer = regularizer_l1(0.000001)) %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+```
+
+
+
+
+# Model 27 - m12 + regularizer + dropout=0.2 (val_loss: val_loss: 0.2927 - val_accuracy: 0.8949 - test: 89.08%)
+# Model 28 - m27 + dropout = 0.1 (val_loss: 0.2917 - val_accuracy: 0.8942 - test:89%)
+```{r}
+input <- layer_input(shape = c(1), dtype = "string")
+
+output <- input %>% 
+  text_vectorization() %>% 
+  layer_embedding(input_dim = num_words + 1, output_dim = 64) %>%
+  #bidirectional(layer_lstm(units = 64, dropout = 0.2, recurrent_dropout = 0.2)) %>%
+  layer_global_average_pooling_1d() %>%
+  layer_dense(units = 64, activation = "relu",bias_regularizer = regularizer_l1(0.000001), kernel_regularizer = regularizer_l1(0.000001)) %>%
+  #layer_dropout(0.2) %>%
+  #layer_dense(units = 64, activation = "relu",bias_regularizer = regularizer_l1(0.000001), kernel_regularizer = regularizer_l1(0.000001)) %>%
+  layer_dropout(0.5) %>%
+  layer_dense(units = 3, activation = "softmax")
+model <- keras_model(input, output)
+
+model %>% compile(
+  optimizer = 'rmsprop',
+  loss = 'sparse_categorical_crossentropy',
+  metrics = list('accuracy')
+)
+
+history <- model %>% fit(
+  partial_x_train,
+  partial_y_train,
+  epochs = 20,
+  batch_size = 64,
+  verbose =2,
+  validation_data = list(x_val, y_val),
+  callbacks = list(callback_early_stopping(monitor = "val_loss",patience = 3,verbose = 0, mode ='min'),
+  callback_model_checkpoint(filepath = 'model_27', save_best_only = TRUE,monitor = 'val_loss',mode='min'))
+)
+predictions <- model %>% predict(test$tweet)
+predicted <- c()
+for (i in 1:dim(predictions)[1]) {
+  predicted <- c(predicted, which.max(predictions[i,]))
+}
+lol <- table(predicted, test$sentiment)
+lol
+(lol[1]+lol[5]+lol[9])/length(test$sentiment)*100
+```
+
+
+
+
+
+# Compile and run
+```{r}
+model %>% compile(
+  optimizer = 'adam',
+  loss = 'sparse_categorical_crossentropy',
+  metrics = list('accuracy')
+)
+```
+
+# For own testing and trainings
+```{r}
+set.seed(NULL)
+spl <- sample.split(df$sentiment,SplitRatio=0.8)
+train <- subset(df,spl==TRUE)
+test <- subset(df,spl==FALSE)
+# train <- df
+
+val_indices <- 1:4500
+
+x_val <- train$tweet[val_indices]
+partial_x_train <- train$tweet[-val_indices]
+
+y_val <- train$sentiment[val_indices]
+partial_y_train <- train$sentiment[-val_indices]
+
+# y_val <- as.factor(y_val)
+# partial_y_train <- as.factor(partial_y_train)
+```
+
+```{r}
+history <- model %>% fit(
+  partial_x_train,
+  partial_y_train,
+  epochs = 15,
+  batch_size = 64,
+  verbose =2,
+  validation_data = list(x_val, y_val),
+  callbacks = list(callback_early_stopping(monitor = "val_loss",patience = 4,verbose = 0, mode ='min'),
+  callback_model_checkpoint(filepath = 'model_16', save_best_only = TRUE,monitor = 'val_loss',mode='min'))
+)
+```
+
+
+
+```{r}
+plot(history)
+```
+# For real test data
+
+```{r}
+set.seed(NULL)
+spl <- sample.split(df$sentiment,SplitRatio=0.8)
+train <- subset(df,spl==TRUE)
+val <- subset(df,spl==FALSE)
+
+
+x_val <- val$tweet
+partial_x_train <- train$tweet
+
+y_val <- val$sentiment
+partial_y_train <- train$sentiment
+
+
+history <- model %>% fit(
+  partial_x_train,
+  partial_y_train,
+  epochs = 5,
+  batch_size = 64,
+  verbose =2,
+  validation_data = list(x_val, y_val)
+)
+```
+
+
+```{r}
+predictions <- model %>% predict(df_test$tweet)
+predicted <- c()
+for (i in 1:dim(predictions)[1]) {
+  predicted <- c(predicted, which.max(predictions[i,]))
+}
+df_test$sentiment = (predicted)
+df_test
+```
+
+```{r}
+write.csv(df_test,"submission.csv", row.names = FALSE)
+
+```
+
+# Own test results
+```{r}
+# keras_predict_classes(model, test$tweet, batch_size = 32, verbose = 1)
+
+predictions <- model %>% predict(test$tweet)
+predicted <- c()
+for (i in 1:dim(predictions)[1]) {
+  predicted <- c(predicted, which.max(predictions[i,]))
+}
+lol <- table(predicted, test$sentiment)
+lol
+(lol[1]+lol[5]+lol[9])/length(test$sentiment)*100
+```
+
+
+
